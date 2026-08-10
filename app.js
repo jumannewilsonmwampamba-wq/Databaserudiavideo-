@@ -61,6 +61,7 @@ function writeVideoBlobStream(rawVideoBytes) {
     // Kurudisha link ya kizalendo kwenda kioone cha mteja sekunde ya sifuri na kufunga boma
     return generatedLink;
 } // Hapa ndio mwisho wa ufungaji rasmi wa ile injini ya writeVideoBlobStream
+
 // Ngome ya 5: Mlango Mkuu wa Seva ya Mtandao (The HTTP Network Core)
 const http = require('http');
 
@@ -90,6 +91,22 @@ const server = http.createServer((req, res) => {
         res.end("Not Found");
     }
 });
+// Ngome ya Ulinzi wa Milele: Mtambo wa Ndani unaolazimisha Render isilale masaa yote
+const https = require('https'); // Itifaki ya asili ya ki-hardware ya Node.js kusoma Link za HTTPS
+
+// Swichi Kuu ya Saa: Piga hodi kiotomatiki kila baada ya dakika 10 (Mzunguko wa Bure wa Milele)
+setInterval(() => {
+    console.log("[JumanneDB Kernel] 🛡️  Majeshi ya ndani yanaamshwa! Kupiga hodi kuzuia usingizi...");
+    
+    // Mtambo unajipiga hodi wenyewe hewani Render kupitia Link yake rasmi ya kwanza ya Live
+    https.get('https://onrender.com', (res) => {
+        console.log(`[JumanneDB Kernel] ✅ Seva ipo macho masaa yote! (Status: ${res.statusCode})`);
+    }).on('error', (err) => {
+        console.error("[JumanneDB Kernel] ❌ Hitilafu ya kujiamsha:", err.message);
+    });
+}, 10 * 60 * 1000); // Mzunguko sahihi wa Dakika 10 kamili
+
+
 
 // Washa mtambo ukae macho kwenye Port ya Render ya bure (Gharama: Shilingi Sifuri)
 const PORT = process.env.PORT || 3000;
