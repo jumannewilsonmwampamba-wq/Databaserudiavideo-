@@ -1,0 +1,14 @@
+{
+  "name": "jumannedb-video-kernel",
+  "version": "1.0.0",
+  "description": "Injini Kuu ya Memory ya JumanneDB ya Kumeza Video",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "private": true
+}
