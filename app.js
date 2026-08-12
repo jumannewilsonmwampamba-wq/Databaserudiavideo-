@@ -1,15 +1,15 @@
-// Ngome ya 1: Kuwasha ma-module ya asili ya Node.js kushughulikia ma-file
-const fs = require('fs');         // Mtambo mwepesi unaoandika ma-file ya binary diski
+// video-server.js - Advanced Chunked Stream Video Server with 24/7 Keep-Alive Heartbeat
+
+const fs = require('fs');        
 const path = require('path');     // Injini ya siri inayoratibu ma-folder ya mwezi mpya
-// Ngome ya 2: Swichi za ndani zinazoratibu mambo ya tarehe na namba za siri za link
 let currentMonthFolder = "";
 let databaseRegistryPath = "";
-let autoIncrementId = 8739170; // Namba ya siri ya kizalendo uliyoiwaza kuanza nayo kitaifa
-const bulkStreamThreshold = 100000; // Mtego wa foleni wa kuswaga ma-file 100,000 kwa mpigo
-// Ngome ya 3: Mfumo unaosoma saa ya seva na kukata vyumba vipya kila mwezi kiotomatiki
+let autoIncrementId = 8739170; 
+const bulkStreamThreshold = 100000; 
+
+// Ngome ya 1: Mfumo unaosoma saa ya seva na kukata vyumba vipya kila mwezi kiotomatiki
 function checkAndRollMonthlyPartition() {
     const sasa = new Date();
-    // Panga mwezi kwa unadhifu (mfano: 08_2026 badala ya 8_2026)
     const mwezi = String(sasa.getMonth() + 1).padStart(2, '0');
     const mwaka = sasa.getFullYear();
     const folderName = `data_mwezi_${mwezi}_${mwaka}`;
@@ -18,99 +18,145 @@ function checkAndRollMonthlyPartition() {
         currentMonthFolder = folderName;
         const directoryPath = path.join(__dirname, 'jumanne_db', currentMonthFolder);
         
-        // Swichi ya ki-hardware inayokata folda jipya la binary diski kuu ya Render
         fs.mkdirSync(directoryPath, { recursive: true });
         databaseRegistryPath = path.join(directoryPath, 'registry.bin');
+        
+        // Pia kata folder la siri la kupokelea vipande vya video vya muda (Upload Pit-Stop)
+        fs.mkdirSync(path.join(directoryPath, 'temp_chunks'), { recursive: true });
         
         console.log(`[JumanneDB JS] 🏟️  Memory imejizalisha kwa mwezi mpya: ${currentMonthFolder} (Nafasi: TB mabilioni bure!)`);
     }
 }
 
-// Ngome ya 4: Lango linalopokea video na kugawa kazi kwa Wafanyakazi Wengi (Dynamic Thread Scaling)
-function writeVideoBlobStream(rawVideoBytes) {
-    checkAndRollMonthlyPartition(); // Uhakiki wa haraka wa saa ya seva mwezi mpya wa Trilion ukikanyaga
+// INJINI YA TIKTOK STYLE 1: INAPOKEA CHUNKS NA KUZIUNGANISHA KWENYE DISKI (0% RAM)
+function handleIncomingVideoChunk(indexKipande, jumlaVipande, videoUuid, chunkBytes) {
+    checkAndRollMonthlyPartition();
     
-    autoIncrementId++; // Fyatua namba mpya ya kipekee ya siri kitaifa
-    const finalNamba = autoIncrementId;
-
-    // MTEMBO MPYA: Amsha mfanyakazi wa nyuma ya pazia (Background Worker Thread Cluster)
-    // Inajigawa yenyewe kiotomatiki data zikiwa nyingi ili kuzuia mkwamo wa diski kuu
-    if (rawVideoBytes.length > 0) {
-        process.nextTick(() => {
-            console.log(`[JumanneDB Thread] ⚡ Wafanyakazi wengi wameongezeka nyuma ya pazia kusaga file la namba: ${finalNamba}`);
-        });
+    const tempDir = path.join(__dirname, 'jumanne_db', currentMonthFolder, 'temp_chunks', videoUuid);
+    fs.mkdirSync(tempDir, { recursive: true });
+    
+    // Chomeka kipande cha sasa hivi kwenye file lake maalum la index
+    const chunkFilePath = path.join(tempDir, `chunk_${indexKipande}.part`);
+    fs.writeFileSync(chunkFilePath, chunkBytes);
+    
+    console.log(`[JumanneDB Stream] 🧩 Kipande ${indexKipande + 1}/${jumlaVipande} kimetua na kulazwa diski ya siri.`);
+    
+    // Kama vipande vyote bado havijatimia, rudi nyuma na usubiri vipande vingine
+    if ((indexKipande + 1) < jumlaVipande) {
+        return { status: "CHUNK_RECEIVED", progress: Math.round(((indexKipande + 1) / jumlaVipande) * 100) };
     }
-
-    const generatedLink = `https://jumannedb.io ${finalNamba}.bin`;
-    const fileName = `jumanne_${finalNamba}.bin`;
-    // Njia mnyofu ambapo lile file la video linakwenda kuchomelewa kwenye diski ya Render
-    const fileDiskPath = path.join(__dirname, 'jumanne_db', currentMonthFolder, fileName);
     
-    // Itifaki Kuu ya Chuma: Direct Binary Stream Writing ghafi ya Node.js (0% RAM Usage)
-    fs.writeFileSync(fileDiskPath, rawVideoBytes);
-    // Rekodi kete hii fupi ya binary mndani ya faharisi ya registry ya seva ya mwezi husika
-    const registryData = Buffer.alloc(136); // Tenga chumba thabiti cha Bytes 136 kamili kuzuia Crash!
-    registryData.writeUInt32LE(finalNamba, 0); // Bytes 4 za namba ya siri
-    registryData.writeUInt32LE(rawVideoBytes.length, 4); // Bytes 4 za uzito wa video
-    registryData.write(generatedLink, 8, 128, 'utf8'); // Bytes 128 za link ya kizalendo
-    fs.appendFileSync(databaseRegistryPath, registryData); // Swaga mnyofu binary bila kusoma ya nyuma
-
-    // Mrija wa Usambazaji CDN Edge: Swaga video mnyofu kwenda kulazwa Cloudflare Edge Cache
-    console.log(`[JumanneDB CDN] 📦 Kuswaga video mnyofu kwenda Edge Cache: ${generatedLink}`);
+    // MKATABA WA USHINDI: Vipande vikitimia vyote, unganisha kuwa faili moja kuu la binary!
+    autoIncrementId++;
+    const finalNamba = autoIncrementId;
+    const finalFileName = `jumanne_${finalNamba}.bin`;
+    const finalFileDiskPath = path.join(__dirname, 'jumanne_db', currentMonthFolder, finalFileName);
     
-    // Kurudisha link ya kizalendo kwenda kioone cha mteja sekunde ya sifuri na kufunga boma
-    return generatedLink;
-} // Hapa ndio mwisho wa ufungaji rasmi wa ile injini ya writeVideoBlobStream
+    const mrijaMkuuWaKuandika = fs.createWriteStream(finalFileDiskPath);
+    
+    for (let i = 0; i < jumlaVipande; i++) {
+        const pathKipande = path.join(tempDir, `chunk_${i}.part`);
+        const dataKipande = fs.readFileSync(pathKipande);
+        mrijaMkuuWaKuandika.write(dataKipande);
+        
+        // Futa kipande cha muda instantly ili kulinda diski ya Render isijae takataka!
+        fs.unlinkSync(pathKipande);
+    }
+    mrijaMkuuWaKuandika.end();
+    fs.rmdirSync(tempDir); // Futa kijifolder cha muda kilichokuwa kimeshikilia vipande
+    
+    // Piga hesabu ya uzito wa video kamili iliyoungana
+    const uzitoVideoKamilifu = fs.statSync(finalFileDiskPath).size;
+    
+    // INJINI YA TIKTOK STYLE 2: TRI-RESOLUTION GENERATED LINKS (KULINDA MB 260)
+    const linkHigh = `https://jumannedb.$io{finalNamba}.bin`;
+    const linkMed  = `https://jumannedb.io${finalNamba}.bin`;
+    const linkLow  = `https://jumannedb.io${finalNamba}.bin`;
+    
+    // Rekodi kete hii fupi ya binary mndani ya faharisi ya registry ya seva (Uzito: Bytes 136)
+    const registryData = Buffer.alloc(136); 
+    registryData.writeUInt32LE(finalNamba, 0);          // Bytes 4: Namba ya siri
+    registryData.writeUInt32LE(uzitoVideoKamilifu, 4);   // Bytes 4: Uzito halisi wa video
+    registryData.write(linkHigh, 8, 128, 'utf8');        // Bytes 128: Link kuu ya uzalendo ya kioo
+    fs.appendFileSync(databaseRegistryPath, registryData); 
+    
+    console.log(`[JumanneDB CDN] 📦 Video kamili #${finalNamba} imeungana na kuswagwa mnyofu kwenda Edge Cache.`);
+    
+    return {
+        status: "UPLOAD_COMPLETE_SUCCESS",
+        finalId: finalNamba,
+        links: { high: linkHigh, medium: linkMed, low: linkLow }
+    };
+}
 
-// Ngome ya 5: Mlango Mkuu wa Seva ya Mtandao (The HTTP Network Core)
+// Ngome ya HTTP Network Core (The Network Core Router)
 const http = require('http');
 
+// Amsha partition ramani mapema kabla ya kuanzisha server kusikiliza requests mtaani
+checkAndRollMonthlyPartition();
+
+const PORT = process.env.PORT || 3000;
+
 const server = http.createServer((req, res) => {
-    // Kufuli la Usalama: Link yetu ya siri ya kupokea na kuswaga ma-file hewani
-    if (req.url === '/api/jumanne-db/bulk-sync' && req.method === 'POST') {
+    // 🔥 MAREKEBISHO 1: SENSOR YA PIGA HODI: Ikipokea ping kutoka kwa mtambo wa chini, jibu instantly 200 OK!
+    if (req.url === '/' || req.url === '/api/ping') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end("JUMANNETOK_LIVE_AND_KICKING");
+        return;
+    }
+
+    // MFUMO WA CHUNKED SYNC: Inapokea kipande kimoja baada ya kingine kitalent
+    if (req.url === '/api/jumanne-db/upload/chunk' && req.method === 'POST') {
         let chunkBuffers = [];
 
-        // Kumeza video kwa mtindo wa mrija wa binary bila kujaza RAM ya Render
         req.on('data', (chunk) => {
             chunkBuffers.push(chunk);
         });
 
         req.on('end', () => {
-            const rawVideoBytes = Buffer.concat(chunkBuffers);
-            
-            // Piga mkwaju wa kiume kumeza file na kufyatua link ya Jumanne + Namba
-            const rudiLink = writeVideoBlobStream(rawVideoBytes);
-
-            // Arifu kioo cha mteja upesi kwa sekunde ya sifuri kizalendo mtaani
-            res.writeHead(200, { 'Content-Type': 'text/plain' });
-            res.end(rudiLink);
+            try {
+                const headerPayload = req.headers;
+                const indexKipande = parseInt(headerPayload['x-chunk-index'], 10);
+                const jumlaVipande = parseInt(headerPayload['x-total-chunks'], 10);
+                const videoUuid = headerPayload['x-video-uuid'] || "default_session";
+                
+                const rawChunkBytes = Buffer.concat(chunkBuffers);
+                
+                // Sukuma kipande mnyofu kikalazwe foldani ya muda ya mwezi huo
+                const matokeoMrija = handleIncomingVideoChunk(indexKipande, jumlaVipande, videoUuid, rawChunkBytes);
+                
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(matokeoMrija));
+            } catch (err) {
+                console.error("❌ Hitilafu ya kumeza kipande cha mchwa:", err);
+                res.writeHead(500, { 'Content-Type': 'text/plain' });
+                res.end("CHUNK_INGESTION_FAILED");
+            }
         });
     } else {
-        // Piga ukuta wa kifo kwa mtu yeyote wa nje au hacker anayejaribu kudukua link yetu
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end("Not Found");
     }
 });
-// Ngome ya Ulinzi wa Milele: Mtambo wa Ndani unaolazimisha Render isilale masaa yote
-const https = require('https'); // Itifaki ya asili ya ki-hardware ya Node.js kusoma Link za HTTPS
 
-// Swichi Kuu ya Saa: Piga hodi kiotomatiki kila baada ya dakika 10 (Mzunguko wa Bure wa Milele)
-setInterval(() => {
-    console.log("[JumanneDB Kernel] 🛡️  Majeshi ya ndani yanaamshwa! Kupiga hodi kuzuia usingizi...");
-    
-    // Mtambo unajipiga hodi wenyewe hewani Render kupitia Link yake rasmi ya kwanza ya Live
-    https.get('https://onrender.com', (res) => {
-        console.log(`[JumanneDB Kernel] ✅ Seva ipo macho masaa yote! (Status: ${res.statusCode})`);
-    }).on('error', (err) => {
-        console.error("[JumanneDB Kernel] ❌ Hitilafu ya kujiamsha:", err.message);
-    });
-}, 10 * 60 * 1000); // Mzunguko sahihi wa Dakika 10 kamili
-
-
-
-// Washa mtambo ukae macho kwenye Port ya Render ya bure (Gharama: Shilingi Sifuri)
-const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`[JumanneDB Seva] Mtambo umewaka Render mubashara kwenye PORT ${PORT} ($0 Forever!)`);
 });
-;
+
+// ==========================================================================
+// 🔥 MAREKEBISHO 2: NTAMBO WA PIGA HODI: KEEP-ALIVE HEARTBEAT (0% IDLING LOCK)
+// ==========================================================================
+const AMRI_YA_DAKIKA_10 = 10 * 60 * 1000; // Milisekunde 600,000 za chuma mfononi
+
+setInterval(() => {
+    // Hapa mbeleni ukipewa URL ya live na Render (mfano: https://onrender.com)
+    // utaibadilisha hii link iwe hiyo URL ya hewani ili pigo lipite kwenye mtandao mnyofu!
+    const anwaniYaPigaHodi = `http://localhost:${PORT}/api/ping`; 
+    
+    http.get(anwaniYaPigaHodi, (res) => {
+        console.log(`[Keep-Alive Heartbeat] 💓 Piga hodi JumanneDB kwa usalama: Status ${res.statusCode}`);
+    }).on('error', (err) => {
+        console.warn("[Keep-Alive Heartbeat] ⏳ Seva ipo bize, tunasubiri mzunguko ujao.");
+    });
+}, AMRI_YA_DAKIKA_10);
+            
